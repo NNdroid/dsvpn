@@ -466,10 +466,10 @@ Cmds firewall_rules_cmds(int is_server)
         static const char *set_cmds[] = {
             "sysctl net.ipv4.ip_forward=1",
             "sysctl net.ipv6.conf.all.forwarding=1",
+            "ip link set dev $IF_NAME up",
             "ip addr add $LOCAL_TUN_IP peer $REMOTE_TUN_IP dev $IF_NAME",
             "ip -6 addr add $LOCAL_TUN_IP6 peer $REMOTE_TUN_IP6/128 dev $IF_NAME",
             "ip -6 route add $REMOTE_TUN_IP6 dev $IF_NAME", // 服务端：新增路由
-            "ip link set dev $IF_NAME up",
             "iptables -t raw -I PREROUTING ! -i $IF_NAME -d $LOCAL_TUN_IP -m addrtype ! --src-type LOCAL -j DROP",
             
 // ----- NAT4 规则分离 -----
