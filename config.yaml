@@ -1,0 +1,15 @@
+# 运行模式: "server" 或 "client"
+role: "client"
+key_file: "vpn.key"
+server_ip: "1.2.3.4"
+server_port: "443"
+interface: "tun0"
+local_tun_ip: "192.168.192.2"
+remote_tun_ip: "192.168.192.1"
+gateway_ip: "auto" # client 独有
+
+tcp_brutal:
+  enabled: true
+  # Brutal 必须指定确切的发送速率 (单位: bytes/s)
+  # 例如 10MB/s = 10485760
+  rate_bytes: 10485760

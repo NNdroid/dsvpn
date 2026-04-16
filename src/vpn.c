@@ -1,3 +1,4 @@
+#include <yaml.h>
 #include "vpn.h"
 #include "charm.h"
 #include "os.h"
@@ -24,6 +25,19 @@ typedef struct Context_ {
     const char   *server_port;
     const char   *ext_if_name;
     const char   *wanted_ext_gw_ip;
+	// --- 新增：用于存储从 YAML 读取的配置内容的缓冲区 ---
+    char          key_file_buf[256];
+    char          server_ip_or_name_buf[128];
+    char          server_port_buf[16];
+    char          wanted_if_name_buf[IFNAMSIZ];
+    char          local_tun_ip_buf[64];
+    char          remote_tun_ip_buf[64];
+    char          local_tun_ip6_buf[64];
+    char          remote_tun_ip6_buf[64];
+    char          wanted_ext_gw_ip_buf[64];
+	// 新增 Brutal 字段
+    int           brutal_enabled;
+    uint64_t      brutal_rate;
     char          client_ip[NI_MAXHOST];
     char          ext_gw_ip[64];
     char          server_ip[64];
@@ -83,7 +97,7 @@ static int firewall_rules(Context *context, int set, int silent)
     return 0;
 }
 
-static int tcp_client(const char *address, const char *port)
+static int tcp_client(Context *context, const char *address, const char *port)
 {
     struct addrinfo hints, *res;
     int             eai;
@@ -103,7 +117,7 @@ static int tcp_client(const char *address, const char *port)
         return -1;
     }
     if ((client_fd = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP)) == -1 ||
-        tcp_opts(client_fd) != 0 ||
+        tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0 ||
         connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
         freeaddrinfo(res);
         err = errno;
@@ -227,12 +241,16 @@ static int tcp_accept(Context *context, int listen_fd)
     if ((client_fd = accept(listen_fd, (struct sockaddr *) &client_ss, &client_ss_len)) < 0) {
         return -1;
     }
+	// 对 accept 返回的新 client_fd 设置 socket 选项
+    if (tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) { 
+        return -1;
+    }
     if (client_ss_len <= (socklen_t) 0U) {
         (void) close(client_fd);
         errno = EINTR;
         return -1;
     }
-    if (tcp_opts(client_fd) != 0) {
+    if (tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) {
         err = errno;
         (void) close(client_fd);
         errno = err;
@@ -311,7 +329,7 @@ static int client_connect(Context *context)
 #endif
     memset(context->uc_st, 0, sizeof context->uc_st);
     context->uc_st[context->is_server][0] ^= 1;
-    context->client_fd = tcp_client(context->server_ip, context->server_port);
+    context->client_fd = tcp_client(context, context->server_ip, context->server_port);
     if (context->client_fd == -1) {
         perror("Client connection failed");
         return -1;
@@ -559,62 +577,172 @@ static int resolve_ip(char *ip, size_t sizeof_ip, const char *ip_or_name)
     return 0;
 }
 
+static int load_yaml_config(const char *filename, Context *ctx) {
+    FILE *fh = fopen(filename, "r");
+    if (!fh) {
+        fprintf(stderr, "Cannot open config file: %s\n", filename);
+        return -1;
+    }
+
+    yaml_parser_t parser;
+    yaml_event_t  event;
+    if (!yaml_parser_initialize(&parser)) {
+        fclose(fh);
+        return -1;
+    }
+    yaml_parser_set_input_file(&parser, fh);
+
+    int current_key = 0;
+    // key 映射枚举
+    enum { NONE = 0, ROLE, KEY_FILE, SERVER_IP, SERVER_PORT, INTERFACE, 
+           LOCAL_IP, REMOTE_IP, LOCAL_IP6, REMOTE_IP6, GW_IP, 
+           BRUTAL_ENABLED, BRUTAL_RATE };
+
+    while (1) {
+        if (!yaml_parser_parse(&parser, &event)) break;
+        if (event.type == YAML_STREAM_END_EVENT) {
+            yaml_event_delete(&event);
+            break;
+        }
+
+        if (event.type == YAML_SCALAR_EVENT) {
+            char *val = (char *)event.data.scalar.value;
+            
+            // 解析 Key
+            if (current_key == NONE) {
+                if (strcmp(val, "role") == 0) current_key = ROLE;
+                else if (strcmp(val, "key_file") == 0) current_key = KEY_FILE;
+                else if (strcmp(val, "server_ip") == 0) current_key = SERVER_IP;
+                else if (strcmp(val, "server_port") == 0) current_key = SERVER_PORT;
+                else if (strcmp(val, "interface") == 0) current_key = INTERFACE;
+                else if (strcmp(val, "local_tun_ip") == 0) current_key = LOCAL_IP;
+                else if (strcmp(val, "remote_tun_ip") == 0) current_key = REMOTE_IP;
+                else if (strcmp(val, "local_tun_ip6") == 0) current_key = LOCAL_IP6;
+                else if (strcmp(val, "remote_tun_ip6") == 0) current_key = REMOTE_IP6;
+                else if (strcmp(val, "gateway_ip") == 0) current_key = GW_IP;
+                else if (strcmp(val, "enabled") == 0) current_key = BRUTAL_ENABLED;
+                else if (strcmp(val, "rate_bytes") == 0) current_key = BRUTAL_RATE;
+            } 
+            // 解析 Value
+            else {
+                switch (current_key) {
+                    case ROLE: ctx->is_server = (strcmp(val, "server") == 0); break;
+                    case KEY_FILE: strncpy(ctx->key_file_buf, val, sizeof(ctx->key_file_buf)-1); break;
+                    case SERVER_IP: strncpy(ctx->server_ip_or_name_buf, val, sizeof(ctx->server_ip_or_name_buf)-1); break;
+                    case SERVER_PORT: strncpy(ctx->server_port_buf, val, sizeof(ctx->server_port_buf)-1); break;
+                    case INTERFACE: strncpy(ctx->wanted_if_name_buf, val, sizeof(ctx->wanted_if_name_buf)-1); break;
+                    case LOCAL_IP: strncpy(ctx->local_tun_ip_buf, val, sizeof(ctx->local_tun_ip_buf)-1); break;
+                    case REMOTE_IP: strncpy(ctx->remote_tun_ip_buf, val, sizeof(ctx->remote_tun_ip_buf)-1); break;
+                    case LOCAL_IP6: strncpy(ctx->local_tun_ip6_buf, val, sizeof(ctx->local_tun_ip6_buf)-1); break;
+                    case REMOTE_IP6: strncpy(ctx->remote_tun_ip6_buf, val, sizeof(ctx->remote_tun_ip6_buf)-1); break;
+                    case GW_IP: strncpy(ctx->wanted_ext_gw_ip_buf, val, sizeof(ctx->wanted_ext_gw_ip_buf)-1); break;
+                    case BRUTAL_ENABLED: ctx->brutal_enabled = (strcmp(val, "true") == 0); break;
+                    case BRUTAL_RATE: ctx->brutal_rate = strtoull(val, NULL, 10); break;
+                }
+                current_key = NONE; // 读完值后重置状态
+            }
+        }
+        yaml_event_delete(&event);
+    }
+    
+    yaml_parser_delete(&parser);
+    fclose(fh);
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     Context     context;
     const char *ext_gw_ip;
 
-    if (argc < 3) {
+    if (argc < 2) {
         usage();
-    }
-    memset(&context, 0, sizeof context);
-    context.is_server = strcmp(argv[1], "server") == 0;
-    if (load_key_file(&context, argv[2]) != 0) {
-        fprintf(stderr, "Unable to load the key file [%s]\n", argv[2]);
         return 1;
     }
-    context.server_ip_or_name = (argc <= 3 || strcmp(argv[3], "auto") == 0) ? NULL : argv[3];
-    if (context.server_ip_or_name == NULL && !context.is_server) {
-        usage();
+    
+    memset(&context, 0, sizeof context);
+
+    // 1. 从 YAML 加载配置
+    if (load_yaml_config(argv[1], &context) != 0) {
+        fprintf(stderr, "Failed to parse config file.\n");
+        return 1;
     }
-    context.server_port      = (argc <= 4 || strcmp(argv[4], "auto") == 0) ? DEFAULT_PORT : argv[4];
-    context.wanted_if_name   = (argc <= 5 || strcmp(argv[5], "auto") == 0) ? NULL : argv[5];
-    context.local_tun_ip     = (argc <= 6 || strcmp(argv[6], "auto") == 0)
-                                   ? (context.is_server ? DEFAULT_SERVER_IP : DEFAULT_CLIENT_IP)
-                                   : argv[6];
-    context.remote_tun_ip    = (argc <= 7 || strcmp(argv[7], "auto") == 0)
-                                   ? (context.is_server ? DEFAULT_CLIENT_IP : DEFAULT_SERVER_IP)
-                                   : argv[7];
-    context.wanted_ext_gw_ip = (argc <= 8 || strcmp(argv[8], "auto") == 0) ? NULL : argv[8];
+
+    // 2. 加载密钥文件
+    if (context.key_file_buf[0] == '\0') {
+        fprintf(stderr, "key_file is required in config.\n");
+        return 1;
+    }
+    if (load_key_file(&context, context.key_file_buf) != 0) {
+        fprintf(stderr, "Unable to load the key file [%s]\n", context.key_file_buf);
+        return 1;
+    }
+
+    // 3. 处理默认值与指针绑定
+    // 服务器 IP (客户端必填，服务端可选用于绑定)
+    context.server_ip_or_name = (context.server_ip_or_name_buf[0] != '\0') ? context.server_ip_or_name_buf : NULL;
+    if (context.server_ip_or_name == NULL && !context.is_server) {
+        fprintf(stderr, "Client must specify server_ip in config.\n");
+        return 1;
+    }
+
+    // 端口
+    context.server_port = (context.server_port_buf[0] != '\0') ? context.server_port_buf : DEFAULT_PORT;
+    
+    // 网卡名
+    context.wanted_if_name = (context.wanted_if_name_buf[0] != '\0' && strcmp(context.wanted_if_name_buf, "auto") != 0) ? context.wanted_if_name_buf : NULL;
+
+    // 内网 IP (如果没有配置，使用原版的 DEFAULT 逻辑)
+    context.local_tun_ip = (context.local_tun_ip_buf[0] != '\0' && strcmp(context.local_tun_ip_buf, "auto") != 0) 
+                            ? context.local_tun_ip_buf 
+                            : (context.is_server ? DEFAULT_SERVER_IP : DEFAULT_CLIENT_IP);
+                            
+    context.remote_tun_ip = (context.remote_tun_ip_buf[0] != '\0' && strcmp(context.remote_tun_ip_buf, "auto") != 0) 
+                            ? context.remote_tun_ip_buf 
+                            : (context.is_server ? DEFAULT_CLIENT_IP : DEFAULT_SERVER_IP);
+
+    // 网关 IP
+    context.wanted_ext_gw_ip = (context.wanted_ext_gw_ip_buf[0] != '\0' && strcmp(context.wanted_ext_gw_ip_buf, "auto") != 0) ? context.wanted_ext_gw_ip_buf : NULL;
+    
     ext_gw_ip = context.wanted_ext_gw_ip ? context.wanted_ext_gw_ip : get_default_gw_ip();
     snprintf(context.ext_gw_ip, sizeof context.ext_gw_ip, "%s", ext_gw_ip == NULL ? "" : ext_gw_ip);
+    
     if (ext_gw_ip == NULL && !context.is_server) {
         fprintf(stderr, "Unable to automatically determine the gateway IP\n");
         return 1;
     }
+
     if ((context.ext_if_name = get_default_ext_if_name()) == NULL && context.is_server) {
         fprintf(stderr, "Unable to automatically determine the external interface\n");
         return 1;
     }
+
+    // 处理 IPv6 (结合之前修改的 get_tun6_addresses 逻辑)
     get_tun6_addresses(&context);
+
+    // 4. 核心网络初始化
     context.tun_fd = tun_create(context.if_name, context.wanted_if_name);
     if (context.tun_fd == -1) {
         perror("tun device creation");
         return 1;
     }
     printf("Interface: [%s]\n", context.if_name);
+    
     if (tun_set_mtu(context.if_name, DEFAULT_MTU) != 0) {
         perror("mtu");
     }
+
 #ifdef __OpenBSD__
     pledge("stdio proc exec dns inet", NULL);
 #endif
+
     context.firewall_rules_set = -1;
     if (context.server_ip_or_name != NULL &&
         resolve_ip(context.server_ip, sizeof context.server_ip, context.server_ip_or_name) != 0) {
         firewall_rules(&context, 0, 1);
         return 1;
     }
+
     if (context.is_server) {
         if (firewall_rules(&context, 1, 0) != 0) {
             return -1;
@@ -626,11 +754,14 @@ int main(int argc, char *argv[])
     } else {
         firewall_rules(&context, 0, 1);
     }
+
+    // 5. 启动事件循环
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
     if (doit(&context) != 0) {
         return -1;
     }
+    
     firewall_rules(&context, 0, 0);
     puts("Done.");
 

@@ -339,7 +339,7 @@ const char *get_default_ext_if_name(void)
 #endif
 }
 
-int tcp_opts(int fd)
+int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate)
 {
     int on = 1;
 
@@ -349,10 +349,30 @@ int tcp_opts(int fd)
 #else
     (void) setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *) &on, sizeof on);
 #endif
+// ----- 新增的 TCP Brutal 逻辑开始 -----
+#ifdef __linux__
+    if (brutal_enabled) {
+        char alg[] = "brutal";
+        if (setsockopt(fd, IPPROTO_TCP, TCP_CONGESTION, alg, strlen(alg)) != 0) {
+            fprintf(stderr, "Failed to set TCP_CONGESTION to brutal.\n");
+        } else {
+            struct tcp_brutal_params params = {
+                .rate = brutal_rate,
+                .cwnd_gain = 20
+            };
+            if (setsockopt(fd, IPPROTO_TCP, TCP_BRUTAL_PARAMS, &params, sizeof(params)) != 0) {
+                fprintf(stderr, "Failed to set TCP_BRUTAL_PARAMS.\n");
+            }
+        }
+    } else {
 #ifdef TCP_CONGESTION
-    (void) setsockopt(fd, IPPROTO_TCP, TCP_CONGESTION, OUTER_CONGESTION_CONTROL_ALG,
-                      sizeof OUTER_CONGESTION_CONTROL_ALG - 1);
+        // 如果没有开启 Brutal，退回使用系统默认或原版指定的拥塞控制算法 (比如 BBR)
+        (void) setsockopt(fd, IPPROTO_TCP, TCP_CONGESTION, OUTER_CONGESTION_CONTROL_ALG,
+                          sizeof OUTER_CONGESTION_CONTROL_ALG - 1);
 #endif
+    }
+#endif
+// ----- 新增的 TCP Brutal 逻辑结束 -----
 #if BUFFERBLOAT_CONTROL && defined(TCP_NOTSENT_LOWAT)
     (void) setsockopt(fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT,
                       (char *) (unsigned int[]) { NOTSENT_LOWAT }, sizeof(unsigned int));

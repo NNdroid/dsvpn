@@ -1,7 +1,19 @@
 #ifndef os_H
 #define os_H 1
 
+#include <stdint.h>
 #include "vpn.h"
+
+#ifdef __linux__
+#ifndef TCP_BRUTAL_PARAMS
+#define TCP_BRUTAL_PARAMS 233
+#endif
+// tcp-brutal 内核模块要求的结构体
+struct tcp_brutal_params {
+    uint64_t rate;      // 发送速率 (bytes/s)
+    uint32_t cwnd_gain; // 拥塞窗口增益，默认 20 (表示 2.0)
+};
+#endif
 
 ssize_t safe_read(const int fd, void *const buf_, size_t count, const int timeout);
 
@@ -24,7 +36,8 @@ const char *get_default_gw_ip(void);
 
 const char *get_default_ext_if_name(void);
 
-int tcp_opts(int fd);
+// 修改 tcp_opts 的签名，传入 brutal 参数
+int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate);
 
 int tun_create(char if_name[IFNAMSIZ], const char *wanted_name);
 
