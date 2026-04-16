@@ -537,7 +537,7 @@ __attribute__((noreturn)) static void usage(void)
 static void get_tun6_addresses(Context *context)
 {
     // 如果在 YAML 中已经配置了 IPv6，则直接使用配置的值
-    if (context->local_tun_ip6_str[0] != '\0' && context->remote_tun_ip6_str[0] != '\0') {
+    if (context->local_tun_ip6_buf[0] != '\0' && context->remote_tun_ip6_buf[0] != '\0') {
         context->local_tun_ip6 = context->local_tun_ip6_buf;
         context->remote_tun_ip6 = context->remote_tun_ip6_buf;
         return;
