@@ -468,6 +468,7 @@ Cmds firewall_rules_cmds(int is_server)
             "sysctl net.ipv6.conf.all.forwarding=1",
             "ip addr add $LOCAL_TUN_IP peer $REMOTE_TUN_IP dev $IF_NAME",
             "ip -6 addr add $LOCAL_TUN_IP6 peer $REMOTE_TUN_IP6/128 dev $IF_NAME",
+            "ip -6 route add $REMOTE_TUN_IP6 dev $IF_NAME", // 服务端：新增路由
             "ip link set dev $IF_NAME up",
             "iptables -t raw -I PREROUTING ! -i $IF_NAME -d $LOCAL_TUN_IP -m addrtype ! --src-type LOCAL -j DROP",
             
@@ -496,7 +497,7 @@ Cmds firewall_rules_cmds(int is_server)
 #if defined(NAT6_ENABLE)
             "ip6tables -t nat -D POSTROUTING -o $EXT_IF_NAME -s $REMOTE_TUN_IP6 -j MASQUERADE",
 #endif
-
+            "ip -6 route del $REMOTE_TUN_IP6 dev $IF_NAME", // 服务端：清理路由
             "iptables -t filter -D FORWARD -i $EXT_IF_NAME -o $IF_NAME -m state --state RELATED,ESTABLISHED -j ACCEPT",
             "iptables -t filter -D FORWARD -i $IF_NAME -o $EXT_IF_NAME -j ACCEPT",
             "iptables -t raw -D PREROUTING ! -i $IF_NAME -d $LOCAL_TUN_IP -m addrtype ! --src-type LOCAL -j DROP",
@@ -548,6 +549,7 @@ Cmds firewall_rules_cmds(int is_server)
                    "--src-type LOCAL -j DROP",
                    "ip addr add $LOCAL_TUN_IP peer $REMOTE_TUN_IP dev $IF_NAME",
                    "ip -6 addr add $LOCAL_TUN_IP6 peer $REMOTE_TUN_IP6/128 dev $IF_NAME",
+                   "ip -6 route add $REMOTE_TUN_IP6 dev $IF_NAME", // <--- 客户端：新增路由
 #ifndef NO_DEFAULT_ROUTES
                    "ip route add default dev $IF_NAME table 42069",
                    "ip -6 route add default dev $IF_NAME table 42069",
@@ -564,6 +566,7 @@ Cmds firewall_rules_cmds(int is_server)
        "ip rule delete table main suppress_prefixlength 0",
        "ip -6 rule delete table main suppress_prefixlength 0",
 #endif
+       "ip -6 route del $REMOTE_TUN_IP6 dev $IF_NAME", // <--- 客户端：清理路由
        "iptables -t raw -D PREROUTING ! -i $IF_NAME -d $LOCAL_TUN_IP -m addrtype ! "
        "--src-type LOCAL -j DROP",
        NULL
