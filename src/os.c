@@ -361,7 +361,7 @@ int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate)
                 .cwnd_gain = 20
             };
             if (setsockopt(fd, IPPROTO_TCP, TCP_BRUTAL_PARAMS, &params, sizeof(params)) != 0) {
-                fprintf(stderr, "Failed to set TCP_BRUTAL_PARAMS.\n");
+                ffprintf(stderr, "Failed to set TCP_BRUTAL_PARAMS: %s\n", strerror(errno));
             }
         }
     } else {

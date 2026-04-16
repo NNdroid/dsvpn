@@ -667,6 +667,13 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to parse config file.\n");
         return 1;
     }
+	
+    if (context.brutal_enabled) {
+        printf("TCP Brutal: ENABLED (Rate: %llu bytes/s)\n", (unsigned long long)context.brutal_rate);
+    } else {
+        printf("TCP Brutal: DISABLED\n");
+    }
+    // ----------------------------------------
 
     // 2. 加载密钥文件
     if (context.key_file_buf[0] == '\0') {
