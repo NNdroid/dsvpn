@@ -5,7 +5,9 @@ server_ip: "1.2.3.4"
 server_port: "443"
 interface: "tun0"
 local_tun_ip: "192.168.192.2"
+local_tun_ip6: "64:ff9b::ac10:da02"
 remote_tun_ip: "192.168.192.1"
+remote_tun_ip6: "64:ff9b::ac10:da01"
 gateway_ip: "auto" # client 独有
 
 tcp_brutal:

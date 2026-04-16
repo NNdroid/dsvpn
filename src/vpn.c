@@ -529,26 +529,25 @@ __attribute__((noreturn)) static void usage(void)
     puts("DSVPN " VERSION_STRING
          " usage:\n"
          "\n"
-         "dsvpn\t\"server\"\n\t<key file>\n\t<vpn server ip or name>|\"auto\"\n\t<vpn "
-         "server port>|\"auto\"\n\t<tun interface>|\"auto\"\n\t<local tun "
-         "ip>|\"auto\"\n\t<remote tun ip>|\"auto\"\n\t<external ip>|\"auto\""
-         "\n\n"
-         "dsvpn\t\"client\"\n\t<key file>\n\t<vpn server ip or name>\n\t<vpn server "
-         "port>|\"auto\"\n\t<tun interface>|\"auto\"\n\t<local tun "
-         "ip>|\"auto\"\n\t<remote tun ip>|\"auto\"\n\t<gateway ip>|\"auto\"\n\n"
-         "Example:\n\n[server]\n\tdd if=/dev/urandom of=vpn.key count=1 bs=32\t# create key\n"
-         "\tbase64 < vpn.key\t\t# copy key as a string\n\tsudo ./dsvpn server vpn.key\t# listen on "
-         "443\n\n[client]\n\techo ohKD...W4= | base64 --decode > vpn.key\t# paste key\n"
-         "\tsudo ./dsvpn client vpn.key 34.216.127.34\n");
+         "sudo ./dsvpn <config.yaml>\n\n"
+         "Please provide a valid YAML configuration file.\n");
     exit(254);
 }
 
 static void get_tun6_addresses(Context *context)
 {
-    static char local_tun_ip6[40], remote_tun_ip6[40];
+    // 如果在 YAML 中已经配置了 IPv6，则直接使用配置的值
+    if (context->local_tun_ip6_str[0] != '\0' && context->remote_tun_ip6_str[0] != '\0') {
+        context->local_tun_ip6 = context->local_tun_ip6_buf;
+        context->remote_tun_ip6 = context->remote_tun_ip6_buf;
+        return;
+    }
 
+    // 否则，回退到原版的自动生成逻辑 (NAT64 前缀)
+    static char local_tun_ip6[40], remote_tun_ip6[40];
     snprintf(local_tun_ip6, sizeof local_tun_ip6, "64:ff9b::%s", context->local_tun_ip);
     snprintf(remote_tun_ip6, sizeof remote_tun_ip6, "64:ff9b::%s", context->remote_tun_ip);
+    
     context->local_tun_ip6  = local_tun_ip6;
     context->remote_tun_ip6 = remote_tun_ip6;
 }
