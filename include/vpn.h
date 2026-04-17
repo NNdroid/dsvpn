@@ -55,9 +55,6 @@
 #define DEFAULT_SERVER_IP "192.168.192.254"
 #define DEFAULT_PORT "443"
 #define NO_DEFAULT_ROUTES
-#define TCP_KEEPIDLE
-#define TCP_KEEPINTVL
-#define TCP_KEEPCNT
 
 #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && \
     __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ && !defined(NATIVE_BIG_ENDIAN)
