@@ -344,6 +344,17 @@ int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate)
     int on = 1;
 
     (void) setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &on, sizeof on);
+// ----- 新增：强制 TCP 探活机制，防止半开连接假死 -----
+#ifdef TCP_KEEPIDLE
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (char *) (int[]) { 10 }, sizeof(int)); // 10秒无数据开始探测
+#endif
+#ifdef TCP_KEEPINTVL
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (char *) (int[]) { 3 }, sizeof(int)); // 探测间隔3秒
+#endif
+#ifdef TCP_KEEPCNT
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (char *) (int[]) { 3 }, sizeof(int));   // 失败3次后断开
+#endif
+// ---------------------------------------------------
 #ifdef TCP_QUICKACK
     (void) setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, (char *) &on, sizeof on);
 #else

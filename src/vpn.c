@@ -116,15 +116,47 @@ static int tcp_client(Context *context, const char *address, const char *port)
         errno = EINVAL;
         return -1;
     }
+
     if ((client_fd = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP)) == -1 ||
-        tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0 ||
-        connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
+        tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) {
         freeaddrinfo(res);
-        err = errno;
-        (void) close(client_fd);
-        errno = err;
+        if (client_fd != -1) close(client_fd);
         return -1;
     }
+
+    // 1. 发起连接前，先将 Socket 设置为非阻塞模式
+    fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    // 2. 发起非阻塞 Connect
+    if (connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
+        if (errno != EINPROGRESS) {
+            err = errno;
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = err;
+            return -1;
+        }
+
+        // 3. 使用 poll 等待连接结果，严格设置 3000ms (3秒) 超时
+        struct pollfd pfd = { .fd = client_fd, .events = POLLOUT };
+        if (poll(&pfd, 1, 3000) <= 0) {
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = ETIMEDOUT;
+            return -1;
+        }
+
+        // 4. 检查是否真正握手成功
+        int optval = 0;
+        socklen_t optlen = sizeof(optval);
+        if (getsockopt(client_fd, SOL_SOCKET, SO_ERROR, &optval, &optlen) < 0 || optval != 0) {
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = optval ? optval : ECONNREFUSED;
+            return -1;
+        }
+    }
+
     freeaddrinfo(res);
     return client_fd;
 }

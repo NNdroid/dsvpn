@@ -42,7 +42,7 @@
 #else
 #define DEFAULT_MTU 9000
 #endif
-#define RECONNECT_ATTEMPTS 100
+#define RECONNECT_ATTEMPTS 999999
 #define TAG_LEN 6
 #define MAX_PACKET_LEN 65536
 #define TS_TOLERANCE 7200
@@ -55,6 +55,9 @@
 #define DEFAULT_SERVER_IP "192.168.192.254"
 #define DEFAULT_PORT "443"
 #define NO_DEFAULT_ROUTES
+#define TCP_KEEPIDLE
+#define TCP_KEEPINTVL
+#define TCP_KEEPCNT
 
 #if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && \
     __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__ && !defined(NATIVE_BIG_ENDIAN)
