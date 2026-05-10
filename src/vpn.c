@@ -116,15 +116,53 @@ static int tcp_client(Context *context, const char *address, const char *port)
         errno = EINVAL;
         return -1;
     }
-    if ((client_fd = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP)) == -1 ||
-        tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0 ||
-        connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
+
+    if ((client_fd = socket(res->ai_family, SOCK_STREAM, IPPROTO_TCP)) == -1) {
         freeaddrinfo(res);
-        err = errno;
-        (void) close(client_fd);
-        errno = err;
         return -1;
     }
+
+    // 发起连接前，先将 Socket 设置为非阻塞模式
+    fcntl(client_fd, F_SETFL, fcntl(client_fd, F_GETFL, 0) | O_NONBLOCK);
+
+    // 发起非阻塞 Connect
+    if (connect(client_fd, (const struct sockaddr *) res->ai_addr, res->ai_addrlen) != 0) {
+        if (errno != EINPROGRESS) {
+            err = errno;
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = err;
+            return -1;
+        }
+
+        // 使用 poll 等待连接结果，严格设置 3000ms (3秒) 超时
+        struct pollfd pfd = { .fd = client_fd, .events = POLLOUT };
+        if (poll(&pfd, 1, 3000) <= 0) {
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = ETIMEDOUT;
+            return -1;
+        }
+
+        // 检查是否真正握手成功
+        int optval = 0;
+        socklen_t optlen = sizeof(optval);
+        if (getsockopt(client_fd, SOL_SOCKET, SO_ERROR, &optval, &optlen) < 0 || optval != 0) {
+            close(client_fd);
+            freeaddrinfo(res);
+            errno = optval ? optval : ECONNREFUSED;
+            return -1;
+        }
+    }
+
+    // 必须在确认 TCP 握手彻底成功后，再向内核注入 Brutal 参数！
+    // 这样才能防止内核状态机把速率重置回 1Mbps。
+    if (tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) {
+        close(client_fd);
+        freeaddrinfo(res);
+        return -1;
+    }
+
     freeaddrinfo(res);
     return client_fd;
 }
@@ -241,21 +279,20 @@ static int tcp_accept(Context *context, int listen_fd)
     if ((client_fd = accept(listen_fd, (struct sockaddr *) &client_ss, &client_ss_len)) < 0) {
         return -1;
     }
-	// 对 accept 返回的新 client_fd 设置 socket 选项
-    if (tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) { 
-        return -1;
-    }
+    
     if (client_ss_len <= (socklen_t) 0U) {
         (void) close(client_fd);
         errno = EINTR;
         return -1;
     }
+
     if (tcp_opts(client_fd, context->brutal_enabled, context->brutal_rate) != 0) {
         err = errno;
         (void) close(client_fd);
         errno = err;
         return -1;
     }
+
     getnameinfo((const struct sockaddr *) (const void *) &client_ss, client_ss_len, client_ip,
                 sizeof client_ip, NULL, 0, NI_NUMERICHOST | NI_NUMERICSERV);
     printf("Connection attempt from [%s]\n", client_ip);
@@ -537,7 +574,7 @@ __attribute__((noreturn)) static void usage(void)
 static void get_tun6_addresses(Context *context)
 {
     // 如果在 YAML 中已经配置了 IPv6，则直接使用配置的值
-    if (context->local_tun_ip6_str[0] != '\0' && context->remote_tun_ip6_str[0] != '\0') {
+    if (context->local_tun_ip6_buf[0] != '\0' && context->remote_tun_ip6_buf[0] != '\0') {
         context->local_tun_ip6 = context->local_tun_ip6_buf;
         context->remote_tun_ip6 = context->remote_tun_ip6_buf;
         return;

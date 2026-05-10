@@ -9,12 +9,11 @@
 #define TCP_BRUTAL_PARAMS 23301
 #endif
 // tcp-brutal 内核模块要求的结构体
-// 必须加上 __attribute__((packed)) 防止 C 编译器自动补齐到 16 字节
+// 强制内存对齐，防止 64位系统下 padding 导致传给内核的数据错位
 struct tcp_brutal_params {
-    uint64_t rate;      // 发送速率 (bytes/s)
-    uint32_t cwnd_gain; // 拥塞窗口增益，默认 20 (表示 2.0)
+    uint64_t rate;
+    uint32_t cwnd_gain;
 } __attribute__((packed));
-#endif
 
 ssize_t safe_read(const int fd, void *const buf_, size_t count, const int timeout);
 

@@ -344,11 +344,26 @@ int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate)
     int on = 1;
 
     (void) setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &on, sizeof on);
+
+// ----- 新增：强制 TCP 探活机制，防止半开连接假死 -----
+#ifdef TCP_KEEPIDLE
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, (char *) (int[]) { 10 }, sizeof(int));
+#endif
+#ifdef TCP_KEEPINTVL
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, (char *) (int[]) { 3 }, sizeof(int));
+#endif
+#ifdef TCP_KEEPCNT
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, (char *) (int[]) { 3 }, sizeof(int));
+#endif
+// ---------------------------------------------------
+
+    // 【修复1】：绝对不能用 #else 屏蔽 TCP_NODELAY！必须无条件开启！
+    (void) setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *) &on, sizeof on);
+
 #ifdef TCP_QUICKACK
     (void) setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, (char *) &on, sizeof on);
-#else
-    (void) setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *) &on, sizeof on);
 #endif
+
 // ----- 新增的 TCP Brutal 逻辑开始 -----
 #ifdef __linux__
     if (brutal_enabled) {
@@ -356,27 +371,37 @@ int tcp_opts(int fd, int brutal_enabled, uint64_t brutal_rate)
         if (setsockopt(fd, IPPROTO_TCP, TCP_CONGESTION, alg, strlen(alg)) != 0) {
             fprintf(stderr, "Failed to set TCP_CONGESTION to brutal.\n");
         } else {
+            // 确保传递给内核的是 Bytes per second！
+            // 假设你外层传入的 brutal_rate 是 Mbps (比如 100)，必须换算！
+            // 如果你外层已经算好传入的是 Bytes/s，那就把 * 125000 去掉。
+            uint64_t rate_bps = brutal_rate * 125000; // 1 Mbps = 1000000 Bits / 8 = 125000 Bytes
+
             struct tcp_brutal_params params = {
-                .rate = brutal_rate,
+                .rate = rate_bps, 
                 .cwnd_gain = 20
             };
+            
             if (setsockopt(fd, IPPROTO_TCP, TCP_BRUTAL_PARAMS, &params, sizeof(params)) != 0) {
                 fprintf(stderr, "Failed to set TCP_BRUTAL_PARAMS: %s\n", strerror(errno));
             }
         }
     } else {
 #ifdef TCP_CONGESTION
-        // 如果没有开启 Brutal，退回使用系统默认或原版指定的拥塞控制算法 (比如 BBR)
+        // 如果没有开启 Brutal，退回使用默认算法
         (void) setsockopt(fd, IPPROTO_TCP, TCP_CONGESTION, OUTER_CONGESTION_CONTROL_ALG,
                           sizeof OUTER_CONGESTION_CONTROL_ALG - 1);
 #endif
     }
 #endif
 // ----- 新增的 TCP Brutal 逻辑结束 -----
+
 #if BUFFERBLOAT_CONTROL && defined(TCP_NOTSENT_LOWAT)
+    // 【隐藏陷阱提醒】：如果你这个 NOTSENT_LOWAT 设置得太小（比如只有16KB），
+    // 也会限制大带宽高延迟(BDP)网络下的 Brutal 测速。建议至少配到 131072 (128KB) 以上。
     (void) setsockopt(fd, IPPROTO_TCP, TCP_NOTSENT_LOWAT,
                       (char *) (unsigned int[]) { NOTSENT_LOWAT }, sizeof(unsigned int));
 #endif
+
 #ifdef TCP_USER_TIMEOUT
     (void) setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, (char *) (unsigned int[]) { TIMEOUT },
                       sizeof(unsigned int));
